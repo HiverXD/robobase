@@ -77,7 +77,7 @@ seed: 1
 num_gpus: 1
 log_every: 1000
 log_train_video: false
-log_eval_video: true
+log_eval_video: false
 log_pretrain_every: 100
 save_csv: false
 
