@@ -338,6 +338,9 @@ class ActBCAgent(BC):
             param_dicts, lr=self.lr, weight_decay=self.weight_decay
         )
 
+    def build_view_fusion(self):
+        pass
+
     def train(self, training=True):
         self.training = training
         self.actor.train(training)
@@ -392,15 +395,16 @@ class ActBCAgent(BC):
             )
             qpos = obs.detach()
 
-        rgb = flatten_time_dim_into_channel_dim(
-            # Don't get "tp1" obs
-            stack_tensor_dictionary(
-                extract_many_from_batch(batch, r"rgb(?!.*?tp1)"), 1
-            ),
-            has_view_axis=True,
-        )
-        # (bs, v, c*fs, h, w)
-        image = rgb.float().detach()
+        if self.use_pixels:
+            rgb = flatten_time_dim_into_channel_dim(
+                # Don't get "tp1" obs
+                stack_tensor_dictionary(
+                    extract_many_from_batch(batch, r"rgb(?!.*?tp1)"), 1
+                ),
+                has_view_axis=True,
+            )
+            # (bs, v, c*fs, h, w)
+            image = rgb.float().detach()
 
         task_emb = None
         if self.actor.encoder_model.use_lang_cond:
@@ -418,8 +422,6 @@ class ActBCAgent(BC):
         # calculate gradient
         if self.use_pixels and self.encoder_opt is not None:
             self.encoder_opt.zero_grad(set_to_none=True)
-            if self.use_multicam_fusion and self.view_fusion_opt is not None:
-                self.view_fusion_opt.zero_grad(set_to_none=True)
         self.actor_opt.zero_grad(set_to_none=True)
         loss_dict["loss"].backward()
 
@@ -429,8 +431,6 @@ class ActBCAgent(BC):
         self.actor_opt.step()
         if self.use_pixels and self.encoder is not None:
             self.encoder_opt.step()
-            if self.use_multicam_fusion and self.view_fusion_opt is not None:
-                self.view_fusion_opt.step()
 
         # step lr scheduler every batch
         # this is different from standard pytorch behavior

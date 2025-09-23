@@ -180,8 +180,9 @@ class ResNetEncoder(EncoderModule):
         model: str,
     ):
         super().__init__(input_shape)
-        assert input_shape[1] == 3, "ResNet only supports channel of size 3"
-        self.model = timm.create_model(model, pretrained=True)
+        self.model = timm.create_model(
+            model, pretrained=True, in_chans=input_shape[1]
+        )
         self.model.eval()
 
     def forward(self, x: torch.Tensor):
