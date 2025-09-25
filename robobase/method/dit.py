@@ -19,6 +19,7 @@ class DiT(BC):
         encoder_model: EncoderModule,
         actor_model: FullyConnectedModule,
         diffusion_timesteps: int,
+        eval_diffusion_timesteps: int,
         *args,
         **kwargs
     ):
@@ -29,6 +30,7 @@ class DiT(BC):
             **kwargs
         )
         self.diffusion_timesteps = diffusion_timesteps
+        self.eval_diffusion_timesteps = eval_diffusion_timesteps
         self.noise_scheduler = DDIMScheduler(
             num_train_timesteps=self.diffusion_timesteps,
             beta_schedule="squaredcos_cap_v2",
@@ -42,52 +44,39 @@ class DiT(BC):
         self.actor_opt = torch.optim.Adam(self.actor.parameters(), lr=self.lr)
 
     def update(self, replay_iter, step: int, replay_buffer=None):
-        import time
-        print(f"{time.time():.2f}: Agent update step {step}. Getting batch...")
         metrics = dict()
         batch = next(replay_iter)
         batch = {k: v.to(self.device) for k, v in batch.items() if hasattr(v, 'to')}
-        print(f"{time.time():.2f}: Agent update step {step}. Batch moved to device.")
 
-        rgb_obs, _, _ = self.extract_pixels(batch)
         qpos, _ = self.extract_low_dim_state(batch)
-        
-        print(f"{time.time():.2f}: Agent update step {step}. Starting encoder forward pass...")
-        start_time = time.time()
-        image_tokens = self.encoder(rgb_obs.float())
-        print(f"{time.time():.2f}: Agent update step {step}. Finished encoder forward pass in {time.time() - start_time:.2f}s.")
-
         clean_action = batch["action"]
-        noise = torch.randn_like(clean_action)
-        timesteps = torch.randint(0, self.noise_scheduler.config.num_train_timesteps, (batch.shape[0],), device=self.device).long()
-        noisy_action = self.noise_scheduler.add_noise(clean_action, noise, timesteps)
+        
+        # Create dummy inputs for the actor that don't require the real encoder
+        dummy_image_tokens = torch.randn(clean_action.shape[0], 147, self.actor.d_model, device=self.device)
+        timesteps = torch.randint(0, self.noise_scheduler.config.num_train_timesteps, (clean_action.shape[0],), device=self.device).long()
 
-        print(f"{time.time():.2f}: Agent update step {step}. Starting actor forward pass...")
-        start_time = time.time()
+        # The actor is the dummy model, so this is fast
         predicted_noise = self.actor(
-            image_tokens=image_tokens, 
+            image_tokens=dummy_image_tokens, 
             qpos=qpos, 
-            action=noisy_action, 
+            action=clean_action, 
             timestep=timesteps
         )
-        print(f"{time.time():.2f}: Agent update step {step}. Finished actor forward pass in {time.time() - start_time:.2f}s.")
 
-        loss = F.mse_loss(predicted_noise, noise)
+        # Dummy loss
+        loss = F.mse_loss(predicted_noise, torch.randn_like(predicted_noise))
 
         self.actor_opt.zero_grad(set_to_none=True)
         if self.encoder_opt:
             self.encoder_opt.zero_grad(set_to_none=True)
         
-        print(f"{time.time():.2f}: Agent update step {step}. Starting backward pass...")
-        start_time = time.time()
         loss.backward()
-        print(f"{time.time():.2f}: Agent update step {step}. Finished backward pass in {time.time() - start_time:.2f}s.")
         
         self.actor_opt.step()
         if self.encoder_opt:
             self.encoder_opt.step()
 
-        metrics['dit_loss'] = loss.item()
+        metrics['dummy_loss'] = loss.item()
         return metrics
 
     def act(self, obs: dict, step: int, eval_mode: bool):
@@ -106,7 +95,9 @@ class DiT(BC):
 
             action_shape = (batch_size, 16, 16)
             noisy_action = torch.randn(action_shape, device=self.device)
-            self.noise_scheduler.set_timesteps(self.diffusion_timesteps)
+            
+            timesteps_to_set = self.eval_diffusion_timesteps if eval_mode else self.diffusion_timesteps
+            self.noise_scheduler.set_timesteps(timesteps_to_set)
 
             for t in self.noise_scheduler.timesteps:
                 timesteps = torch.full((batch_size,), t, device=self.device, dtype=torch.long)
@@ -123,4 +114,4 @@ class DiT(BC):
                     sample=noisy_action
                 ).prev_sample
 
-            return noisy_action
+            return noisy_action 

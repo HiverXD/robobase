@@ -6,10 +6,11 @@ method:
   lr: 1e-4
   num_train_steps: ${num_pretrain_steps}
   adaptive_lr: false
-  diffusion_timesteps: 100 # Moved to be a direct parameter of the method
+  diffusion_timesteps: 6  # Temp: 6 for dev. Should be 100 for real experiments.
+  eval_diffusion_timesteps: 2  # Temp: 2 for dev. Should be 10 for real experiments.
 
   encoder_model:
-    _target_: robobase.models.tokenizing_encoder.TokenizingEncoder
+    _target_: robobase.models.dit_models.DummyEncoder
     _partial_: true
     d_model: 512
     frame_stack: ${frame_stack}
