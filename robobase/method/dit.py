@@ -12,17 +12,23 @@ from robobase.method.utils import (
     stack_tensor_dictionary,
     flatten_time_dim_into_channel_dim,
 )
+from robobase.models.dit_models import SelfAttentionEncoder, DiTPolicyModel
+
 
 class DiT(BC):
     def __init__(
         self,
         encoder_model: EncoderModule,
-        actor_model: FullyConnectedModule,
+        actor_model: DiTPolicyModel,
+        self_attention_encoder_model: SelfAttentionEncoder,
+        proprio_projector: FullyConnectedModule,
         diffusion_timesteps: int,
         eval_diffusion_timesteps: int,
         *args,
         **kwargs
     ):
+        self.self_attention_encoder_model_cfg = self_attention_encoder_model
+        self.proprio_projector_cfg = proprio_projector
         super().__init__(
             encoder_model=encoder_model,
             actor_model=actor_model,
@@ -39,10 +45,16 @@ class DiT(BC):
         )
 
     def build_actor(self):
-        proprio_dim = self.observation_space['low_dim_state'].shape[-1]
-        self.actor = self.actor_model(proprio_dim=proprio_dim).to(self.device)
+        self.actor = self.actor_model().to(self.device)
+        self.self_attention_encoder_model = self.self_attention_encoder_model_cfg().to(self.device)
+        self.proprio_projector = self.proprio_projector_cfg().to(self.device)
         self.actor_opt = torch.optim.Adam(self.actor.parameters(), lr=self.lr)
-
+        self.self_attention_encoder_opt = torch.optim.Adam(
+            self.self_attention_encoder_model.parameters(), lr=self.lr
+        )
+        self.proprio_projector_opt = torch.optim.Adam(
+            self.proprio_projector.parameters(), lr=self.lr
+        )
     def update(self, replay_iter, step: int, replay_buffer=None):
         metrics = dict()
         batch = next(replay_iter)
@@ -51,6 +63,10 @@ class DiT(BC):
         rgb_obs, _, _ = self.extract_pixels(batch)
         qpos, _ = self.extract_low_dim_state(batch)
         image_tokens = self.encoder(rgb_obs.float())
+        proprio_tokens = self.proprio_projector(qpos).unsqueeze(1)
+        
+        encoder_input = torch.cat([image_tokens, proprio_tokens], dim=1)
+        encoder_outputs = self.self_attention_encoder_model(encoder_input)
 
         clean_action = batch["action"]
         noise = torch.randn_like(clean_action)
@@ -58,8 +74,7 @@ class DiT(BC):
         noisy_action = self.noise_scheduler.add_noise(clean_action, noise, timesteps)
 
         predicted_noise = self.actor(
-            image_tokens=image_tokens, 
-            qpos=qpos, 
+            encoder_outputs=encoder_outputs,
             action=noisy_action, 
             timestep=timesteps
         )
@@ -67,12 +82,16 @@ class DiT(BC):
         loss = F.mse_loss(predicted_noise, noise)
 
         self.actor_opt.zero_grad(set_to_none=True)
+        self.self_attention_encoder_opt.zero_grad(set_to_none=True)
+        self.proprio_projector_opt.zero_grad(set_to_none=True)
         if self.encoder_opt:
             self.encoder_opt.zero_grad(set_to_none=True)
         
         loss.backward()
         
         self.actor_opt.step()
+        self.self_attention_encoder_opt.step()
+        self.proprio_projector_opt.step()
         if self.encoder_opt:
             self.encoder_opt.step()
 
@@ -80,7 +99,6 @@ class DiT(BC):
         return metrics
 
     def act(self, obs: dict, step: int, eval_mode: bool):
-        # Correct way to process inference-time observations
         with torch.no_grad():
             qpos = flatten_time_dim_into_channel_dim(
                 extract_from_spec(obs, "low_dim_state")
@@ -90,6 +108,10 @@ class DiT(BC):
                 has_view_axis=True,
             )
             image_tokens = self.encoder(rgb_obs.float())
+            proprio_tokens = self.proprio_projector(qpos).unsqueeze(1)
+
+            encoder_input = torch.cat([image_tokens, proprio_tokens], dim=1)
+            encoder_outputs = self.self_attention_encoder_model(encoder_input)
             
             batch_size = image_tokens.shape[0]
 
@@ -102,8 +124,7 @@ class DiT(BC):
             for t in self.noise_scheduler.timesteps:
                 timesteps = torch.full((batch_size,), t, device=self.device, dtype=torch.long)
                 predicted_noise = self.actor(
-                    image_tokens=image_tokens, 
-                    qpos=qpos, 
+                    encoder_outputs=encoder_outputs,
                     action=noisy_action, 
                     timestep=timesteps
                 )
@@ -114,4 +135,4 @@ class DiT(BC):
                     sample=noisy_action
                 ).prev_sample
 
-            return noisy_action 
+            return noisy_action

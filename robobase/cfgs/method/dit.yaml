@@ -18,9 +18,20 @@ method:
   actor_model:
     _target_: robobase.models.dit_models.DiTPolicyModel
     _partial_: true
-    proprio_dim: 8
     d_model: ${method.encoder_model.d_model}
-    num_encoder_layers: 4
     num_decoder_layers: 4
     num_heads: 8
-    # diffusion_timesteps is now passed to the method, not the model config
+
+  self_attention_encoder_model:
+    _target_: robobase.models.dit_models.SelfAttentionEncoder
+    _partial_: true
+    d_model: ${method.encoder_model.d_model}
+    num_layers: 4
+    num_heads: 8
+
+  proprio_projector:
+    _target_: robobase.models.dit_models.ProprioProjector
+    _partial_: true
+    input_dim: 66
+    hidden_dim: 1024
+    output_dim: ${method.encoder_model.d_model}

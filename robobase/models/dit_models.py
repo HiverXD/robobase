@@ -72,16 +72,27 @@ class DiTDecoderBlock(nn.Module):
         x = x + alpha2.unsqueeze(1) * h_mlp
         return x
 
+class SelfAttentionEncoder(nn.Module):
+    def __init__(self, d_model: int, num_layers: int, num_heads: int):
+        super().__init__()
+        self.layers = nn.ModuleList(
+            [nn.TransformerEncoderLayer(d_model, num_heads, d_model * 4, batch_first=True) for _ in range(num_layers)]
+        )
+        self.pos_encoding = PositionalEncoding(d_model)
+
+    def forward(self, x: torch.Tensor) -> list[torch.Tensor]:
+        h = self.pos_encoding(x)
+        outputs = []
+        for layer in self.layers:
+            h = layer(h)
+            outputs.append(h)
+        return outputs
+
 # Main Policy Model
 class DiTPolicyModel(nn.Module):
-    def __init__(self, proprio_dim: int, d_model: int, num_encoder_layers: int, num_decoder_layers: int, num_heads: int):
+    def __init__(self, d_model: int, num_decoder_layers: int, num_heads: int):
         super().__init__()
         self.d_model = d_model
-        self.proprio_projector = nn.Linear(proprio_dim, d_model)
-        self.pos_encoding = PositionalEncoding(d_model)
-        self.encoder_layers = nn.ModuleList(
-            [nn.TransformerEncoderLayer(d_model, num_heads, d_model * 4, batch_first=True) for _ in range(num_encoder_layers)]
-        )
         self.time_mlp = TimestepEmbedding(d_model)
         self.action_projector = nn.Linear(16, d_model)
         self.decoder_blocks = nn.ModuleList(
@@ -89,15 +100,7 @@ class DiTPolicyModel(nn.Module):
         )
         self.final_layer = nn.Linear(d_model, 16)
 
-    def forward(self, image_tokens, qpos, action, timestep, **kwargs):
-        proprio_tokens = self.proprio_projector(qpos).unsqueeze(1)
-        encoder_input = torch.cat([image_tokens, proprio_tokens], dim=1)
-        h = self.pos_encoding(encoder_input)
-        encoder_outputs = []
-        for layer in self.encoder_layers:
-            h = layer(h)
-            encoder_outputs.append(h)
-
+    def forward(self, encoder_outputs, action, timestep, **kwargs):
         t_emb = self.time_mlp(timestep)
         x_emb = self.action_projector(action)
 
@@ -108,3 +111,15 @@ class DiTPolicyModel(nn.Module):
 
         predicted_noise = self.final_layer(x_emb)
         return predicted_noise
+
+class ProprioProjector(nn.Module):
+    def __init__(self, input_dim: int, hidden_dim: int, output_dim: int):
+        super().__init__()
+        self.mlp = nn.Sequential(
+            nn.Linear(input_dim, hidden_dim),
+            nn.GELU(),
+            nn.Linear(hidden_dim, output_dim),
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.mlp(x)
