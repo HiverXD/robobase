@@ -101,6 +101,7 @@ class Workspace:
         create_replay_fn: Callable[[DictConfig], ReplayBuffer] = None,
         work_dir: str = None,
     ):
+        print(f"{time.time():.2f}: Workspace __init__ started")
         if env_factory is None:
             env_factory = _create_default_envs(cfg)
         if create_replay_fn is None:
@@ -260,6 +261,7 @@ class Workspace:
             self.eval_env = None
 
         self._shutting_down = False
+        print(f"{time.time():.2f}: Workspace __init__ finished")
 
     @property
     def pretrain_steps(self):
@@ -315,10 +317,14 @@ class Workspace:
 
     def _train(self):
         # Load Demo
+        print(f"{time.time():.2f}: Starting _load_demos...")
         self._load_demos()
+        print(f"{time.time():.2f}: Finished _load_demos.")
 
         # Perform pretraining. This is suitable for behaviour cloning or Offline RL
+        print(f"{time.time():.2f}: Starting _pretrain_on_demos...")
         self._pretrain_on_demos()
+        print(f"{time.time():.2f}: Finished _pretrain_on_demos.")
 
         # Perform online rl with exploration.
         self._online_rl()
@@ -510,17 +516,21 @@ class Workspace:
     def _perform_updates(self) -> dict[str, Any]:
         if self.agent.logging:
             start_time = time.time()
-        metrics = {}
+        metrics = dict()
         self.agent.train(True)
         for i in range(self.train_envs.num_envs):
             if (self.main_loop_iterations + i) % self.cfg.update_every_steps != 0:
                 # Skip update
                 continue
+            
+            print(f"{time.time():.2f}: Update iter: {i}. Starting agent.update...")
             metrics.update(
                 self.agent.update(
                     self.replay_iter, self.main_loop_iterations + i, self.replay_buffer
                 )
             )
+            print(f"{time.time():.2f}: Update iter: {i}. Finished agent.update.")
+
         self.agent.train(False)
         if self.agent.logging:
             execution_time_for_update = time.time() - start_time
@@ -602,7 +612,17 @@ class Workspace:
 
                 if should_pretrain_log(self.pretrain_steps):
                     self.agent.logging = True
+                
+                print(f"{time.time():.2f}: Pretrain step: {self.pretrain_steps}. Starting _perform_updates...")
+                start_time = time.time()
                 pretrain_metrics = self._perform_updates()
+                elapsed_time = time.time() - start_time
+                print(f"{time.time():.2f}: Pretrain step: {self.pretrain_steps}. Finished _perform_updates in {elapsed_time:.2f}s.")
+
+                total_steps = self.cfg.num_pretrain_steps
+                remaining_steps = total_steps - (self.pretrain_steps + 1)
+                estimated_remaining_time = elapsed_time * remaining_steps
+                print(f"Step {self.pretrain_steps + 1}/{total_steps}. Estimated time remaining: {estimated_remaining_time:.2f}s")
 
                 if should_pretrain_log(self.pretrain_steps):
                     pretrain_metrics.update(self._get_common_metrics())
@@ -611,7 +631,9 @@ class Workspace:
                     )
 
                 if should_pretrain_eval(self.pretrain_steps):
+                    print(f"{time.time():.2f}: Pretrain step: {self.pretrain_steps}. Starting _eval...")
                     eval_metrics = self._eval()
+                    print(f"{time.time():.2f}: Pretrain step: {self.pretrain_steps}. Finished _eval.")
                     eval_metrics.update(self._get_common_metrics())
                     self.logger.log_metrics(
                         eval_metrics, self.pretrain_steps, prefix="pretrain_eval"

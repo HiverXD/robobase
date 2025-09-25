@@ -1,24 +1,26 @@
 from pathlib import Path
 
+import time
+print(f"{time.time():.2f}: train.py script started")
+
+print(f"{time.time():.2f}: Importing hydra and omegaconf...")
 import hydra
+from omegaconf import DictConfig
+print(f"{time.time():.2f}: Finished importing hydra and omegaconf.")
+
+from robobase.workspace import Workspace
+print(f"{time.time():.2f}: Finished importing Workspace.")
 
 
-@hydra.main(
-    config_path="robobase/cfgs", config_name="robobase_config", version_base=None
-)
-def main(cfg):
-    from robobase.workspace import Workspace
-
-    root_dir = Path.cwd()
-
+@hydra.main(config_path="robobase/cfgs", config_name="robobase_config", version_base="1.3")
+def main(cfg: DictConfig):
+    # We don't need to set the wandb name here, because it is set in the config file
+    # based on the experiment name and the current time.
+    print(f"{time.time():.2f}: main(cfg) started")
     workspace = Workspace(cfg)
-
-    snapshot = root_dir / "snapshot.pt"
-    if snapshot.exists():
-        print(f"resuming: {snapshot}")
-        workspace.load_snapshot()
     workspace.train()
 
 
 if __name__ == "__main__":
+    print(f"{time.time():.2f}: Calling hydra.main...")
     main()

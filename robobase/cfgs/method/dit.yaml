@@ -1,0 +1,25 @@
+# @package _global_
+
+method:
+  _target_: robobase.method.dit.DiT
+  is_rl: false
+  lr: 1e-4
+  num_train_steps: ${num_pretrain_steps}
+  adaptive_lr: false
+  diffusion_timesteps: 100 # Moved to be a direct parameter of the method
+
+  encoder_model:
+    _target_: robobase.models.tokenizing_encoder.TokenizingEncoder
+    _partial_: true
+    d_model: 512
+    frame_stack: ${frame_stack}
+
+  actor_model:
+    _target_: robobase.models.dit_models.DiTPolicyModel
+    _partial_: true
+    proprio_dim: 8
+    d_model: ${method.encoder_model.d_model}
+    num_encoder_layers: 4
+    num_decoder_layers: 4
+    num_heads: 8
+    # diffusion_timesteps is now passed to the method, not the model config
