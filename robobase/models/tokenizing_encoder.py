@@ -3,20 +3,19 @@ import torch.nn as nn
 from torchvision.models import resnet18, ResNet18_Weights
 import numpy as np
 
-from robobase.models.core import EncoderModule
+from robobase.models.encoder import EncoderModule
 
 
 class TokenizingEncoder(EncoderModule):
     """A ResNet-based encoder that tokenizes image inputs."""
 
-    def __init__(self, d_model: int, frame_stack: int, input_shape: dict):
+    def __init__(self, d_model: int, frame_stack: int, input_shape: tuple):
         super().__init__(input_shape)
         self.d_model = d_model
         self.frame_stack = frame_stack
 
-        # All views are assumed to have the same shape
-        example_shape = next(iter(input_shape.values()))
-        single_frame_channels = example_shape[0] // frame_stack
+        num_views, num_channels, height, width = input_shape
+        single_frame_channels = num_channels // frame_stack
 
         # Use a single shared backbone for efficiency
         weights = ResNet18_Weights.DEFAULT
@@ -29,14 +28,25 @@ class TokenizingEncoder(EncoderModule):
         # Projector to map ResNet features (512) to d_model
         self.projector = nn.Conv2d(512, d_model, kernel_size=1)
 
-        self.view_names = sorted(input_shape.keys())
+        # Calculate the number of tokens
+        with torch.no_grad():
+            dummy_input = torch.zeros(1, single_frame_channels, height, width)
+            dummy_map = self.backbone(dummy_input)
+            projected_map = self.projector(dummy_map)
+            self.n_tokens = projected_map.shape[2] * projected_map.shape[3]
 
-    def forward(self, x: dict[str, torch.Tensor]) -> torch.Tensor:
+    @property
+    def output_shape(self) -> tuple[int, int]:
+        num_views = self.input_shape[0]
+        return (num_views * self.frame_stack * self.n_tokens, self.d_model)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # x is a tensor of shape (B, V, C*F, H, W)
         all_tokens = []
-        batch_size = next(iter(x.values())).shape[0]
-
-        for view_name in self.view_names:
-            view_tensor = x[view_name]
+        
+        # Unbind along the view dimension to get a tensor for each view
+        for view_tensor in x.unbind(1):
+            # view_tensor has shape (B, C*F, H, W)
             b, cf, h, w = view_tensor.shape
             c = cf // self.frame_stack
 

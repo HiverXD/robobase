@@ -10,7 +10,7 @@ method:
   eval_diffusion_timesteps: 2  # Temp: 2 for dev. Should be 10 for real experiments.
 
   encoder_model:
-    _target_: robobase.models.dit_models.DummyEncoder
+    _target_: robobase.models.tokenizing_encoder.TokenizingEncoder
     _partial_: true
     d_model: 128  # Temp: 128 for dev. Should be 512 for real experiments.
     frame_stack: ${frame_stack}

@@ -2,15 +2,6 @@ import torch
 import torch.nn as nn
 import math
 
-class DummyEncoder(nn.Module):
-    def __init__(self, d_model, frame_stack, input_shape):
-        super().__init__()
-        self.d_model = d_model
-        self.dummy_layer = nn.Linear(1, 1)  # Add a parameter for the optimizer
-
-    def forward(self, x):
-        # Dummy forward
-        return torch.randn(x.shape[0], 147, self.d_model, device=x.device)
 
 # Helper for sinusoidal positional encoding for sequences
 class PositionalEncoding(nn.Module):

@@ -50,7 +50,6 @@ class DiT(BC):
 
         rgb_obs, _, _ = self.extract_pixels(batch)
         qpos, _ = self.extract_low_dim_state(batch)
-        
         image_tokens = self.encoder(rgb_obs.float())
 
         clean_action = batch["action"]
