@@ -338,6 +338,9 @@ class Workspace:
         return self._eval(eval_record_all_episode=True)
 
     def _eval(self, eval_record_all_episode: bool = False) -> dict[str, Any]:
+        if self.cfg.num_eval_episodes == 0:
+            return {}
+
         # TODO: In future, this func could do with a further refactor
         self.agent.set_eval_env_running(True)
         step, episode, total_reward, successes = 0, 0, 0, 0

@@ -12,7 +12,7 @@ method:
   encoder_model:
     _target_: robobase.models.dit_models.DummyEncoder
     _partial_: true
-    d_model: 512
+    d_model: 128  # Temp: 128 for dev. Should be 512 for real experiments.
     frame_stack: ${frame_stack}
 
   actor_model:
