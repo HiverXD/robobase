@@ -48,23 +48,24 @@ class DiT(BC):
         batch = next(replay_iter)
         batch = {k: v.to(self.device) for k, v in batch.items() if hasattr(v, 'to')}
 
+        rgb_obs, _, _ = self.extract_pixels(batch)
         qpos, _ = self.extract_low_dim_state(batch)
-        clean_action = batch["action"]
         
-        # Create dummy inputs for the actor that don't require the real encoder
-        dummy_image_tokens = torch.randn(clean_action.shape[0], 147, self.actor.d_model, device=self.device)
-        timesteps = torch.randint(0, self.noise_scheduler.config.num_train_timesteps, (clean_action.shape[0],), device=self.device).long()
+        image_tokens = self.encoder(rgb_obs.float())
 
-        # The actor is the dummy model, so this is fast
+        clean_action = batch["action"]
+        noise = torch.randn_like(clean_action)
+        timesteps = torch.randint(0, self.noise_scheduler.config.num_train_timesteps, (clean_action.shape[0],), device=self.device).long()
+        noisy_action = self.noise_scheduler.add_noise(clean_action, noise, timesteps)
+
         predicted_noise = self.actor(
-            image_tokens=dummy_image_tokens, 
+            image_tokens=image_tokens, 
             qpos=qpos, 
-            action=clean_action, 
+            action=noisy_action, 
             timestep=timesteps
         )
 
-        # Dummy loss
-        loss = F.mse_loss(predicted_noise, torch.randn_like(predicted_noise))
+        loss = F.mse_loss(predicted_noise, noise)
 
         self.actor_opt.zero_grad(set_to_none=True)
         if self.encoder_opt:
@@ -76,7 +77,7 @@ class DiT(BC):
         if self.encoder_opt:
             self.encoder_opt.step()
 
-        metrics['dummy_loss'] = loss.item()
+        metrics['dit_loss'] = loss.item()
         return metrics
 
     def act(self, obs: dict, step: int, eval_mode: bool):
