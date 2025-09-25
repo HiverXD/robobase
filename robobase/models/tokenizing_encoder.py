@@ -1,62 +1,66 @@
 import torch
 import torch.nn as nn
-from robobase.models.encoder import EncoderModule
-from robobase.utils import weight_init
+from torchvision.models import resnet18, ResNet18_Weights
+import numpy as np
 
-# Lightweight CNN Backbone
-class LightweightCNNBackbone(nn.Module):
-    def __init__(self, in_channels=3, channels=32):
-        super().__init__()
-        self.net = nn.Sequential(
-            nn.Conv2d(in_channels, channels, kernel_size=3, stride=2, padding=1),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(channels, channels, kernel_size=3, stride=2, padding=1),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(channels, channels, kernel_size=3, stride=2, padding=1),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(channels, channels, kernel_size=3, stride=2, padding=1),
-            nn.ReLU(inplace=True),
-        )
+from robobase.models.core import EncoderModule
 
-    def forward(self, x):
-        return self.net(x)
 
 class TokenizingEncoder(EncoderModule):
-    def __init__(self, input_shape, d_model: int, frame_stack: int):
+    """A ResNet-based encoder that tokenizes image inputs."""
+
+    def __init__(self, d_model: int, frame_stack: int, input_shape: dict):
         super().__init__(input_shape)
         self.d_model = d_model
-        num_views = input_shape[0]
-        view_in_channels = input_shape[1]
-        cnn_channels = 32
+        self.frame_stack = frame_stack
 
-        self.backbones = nn.ModuleList(
-            [LightweightCNNBackbone(in_channels=view_in_channels, channels=cnn_channels) for _ in range(num_views)]
+        # All views are assumed to have the same shape
+        example_shape = next(iter(input_shape.values()))
+        single_frame_channels = example_shape[0] // frame_stack
+
+        # Use a single shared backbone for efficiency
+        weights = ResNet18_Weights.DEFAULT
+        backbone = resnet18(weights=weights)
+        backbone.conv1 = nn.Conv2d(
+            single_frame_channels, 64, kernel_size=7, stride=2, padding=3, bias=False
         )
+        self.backbone = nn.Sequential(*list(backbone.children())[:-2])
         
-        self.projector = nn.Conv2d(cnn_channels, d_model, kernel_size=1)
-        
-        # Calculate output shape
-        test_input = torch.randn(1, view_in_channels, input_shape[2], input_shape[3])
-        with torch.no_grad():
-            test_output = self.backbones[0](test_input)
-            spatial_dim = test_output.shape[2] * test_output.shape[3]
-        
-        self._output_shape = (num_views * spatial_dim, d_model)
-        self.apply(weight_init)
+        # Projector to map ResNet features (512) to d_model
+        self.projector = nn.Conv2d(512, d_model, kernel_size=1)
 
-    def forward(self, x):
-        # x shape: (B, V, C_in, H, W) where C_in = T*C
-        all_view_tokens = []
-        for i, view_x in enumerate(x.unbind(1)):
-            # view_x shape: (B, C_in, H, W)
-            feature_map = self.backbones[i](view_x)
+        self.view_names = sorted(input_shape.keys())
+
+    def forward(self, x: dict[str, torch.Tensor]) -> torch.Tensor:
+        all_tokens = []
+        batch_size = next(iter(x.values())).shape[0]
+
+        for view_name in self.view_names:
+            view_tensor = x[view_name]
+            b, cf, h, w = view_tensor.shape
+            c = cf // self.frame_stack
+
+            # Reshape to (B * F, C, H, W) to process all frames at once
+            frames = view_tensor.view(b * self.frame_stack, c, h, w)
+
+            # Get feature maps -> (B * F, 512, H_out, W_out)
+            feature_map = self.backbone(frames)
+            # Project to d_model -> (B * F, d_model, H_out, W_out)
             projected_map = self.projector(feature_map)
-            tokens = projected_map.flatten(2).permute(0, 2, 1)
-            all_view_tokens.append(tokens)
-            
-        final_tokens = torch.cat(all_view_tokens, dim=1)
-        return final_tokens
 
-    @property
-    def output_shape(self):
-        return self._output_shape
+            # Tokenize by flattening spatial dimensions
+            # (B * F, d_model, N_tokens)
+            tokens = projected_map.flatten(2)
+
+            # Reshape back to (B, F, d_model, N_tokens)
+            _, _, n_tokens = tokens.shape
+            tokens = tokens.view(b, self.frame_stack, self.d_model, n_tokens)
+
+            # Permute and flatten to (B, F * N_tokens, d_model)
+            tokens = tokens.permute(0, 1, 3, 2).contiguous()
+            tokens = tokens.view(b, self.frame_stack * n_tokens, self.d_model)
+            all_tokens.append(tokens)
+
+        # Concatenate tokens from all views -> (B, V * F * N_tokens, d_model)
+        final_tokens = torch.cat(all_tokens, dim=1)
+        return final_tokens
