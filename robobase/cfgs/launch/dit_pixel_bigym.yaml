@@ -22,7 +22,7 @@ is_imitation_learning: true
 action_repeat: 1
 action_sequence: 16
 execution_length: 1
-temporal_ensemble: true
+temporal_ensemble: false
 use_standardization: false
 use_min_max_normalization: true
 min_max_margin: 0
